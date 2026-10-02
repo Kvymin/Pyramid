@@ -152,6 +152,12 @@ _AD_MARK = ('adkwai.com', 'adukwai.com', 'ad-dpa', 'advideolp', 'ad_alliance')
 
 _YEARS = ['2026', '2025', '2024', '2023', '2022', '2021', '2020', '2019', '2018', '2017']
 _SORTS = [('time', '最近更新'), ('hits', '最高人气'), ('score', '最高评分'), ('up', '最多点赞')]
+# 父分类在 APP 列表接口里没有数据（t=1/t=2 恒返回 0 条），
+# 改为按子分类同页合并后本地排序：动漫=6120 部、电影=1834 部（与网页版口径一致）
+_PARENT_MAP = {
+    '1': ['6', '7', '8', '22', '23'],   # 动漫 → 日本/国产/欧美动漫 + 动态漫画 + 日本特摄剧
+    '2': ['3', '4', '5'],               # 电影 → 日本/国产/欧美动画电影
+}
 
 
 class Spider:
@@ -372,6 +378,26 @@ class Spider:
         d = self._api('/api.php/Appapi/vod?pg=1&limit=%d' % self.limit)
         return {'list': self._list_from(d)}
 
+    def _vod_query(self, tid, pg, year, by, limit):
+        """APP 列表接口的查询串。
+        ★ 分类参数是 t（不是 type_id —— type_id/tid/class 实测均被忽略，
+          传了等于没传，会导致所有分类返回同一份列表）。
+        """
+        params = ['t=%s' % tid, 'pg=%d' % pg, 'limit=%d' % limit]
+        if year:
+            params.append('year=' + urllib.parse.quote(year, safe='-'))
+        if by:
+            params.append('by=' + urllib.parse.quote(by, safe=''))
+        return '/api.php/Appapi/vod?' + '&'.join(params)
+
+    def _sort_key(self, it, by):
+        if by in ('hits', 'score', 'up'):
+            try:
+                return float(it.get('vod_' + by) or 0)
+            except Exception:
+                return 0.0
+        return str(it.get('vod_time') or '')
+
     def categoryContent(self, tid, pg, filter, extend):
         pg = int(pg) if str(pg).isdigit() else 1
         ext = {}
@@ -382,17 +408,36 @@ class Spider:
                 ext = json.loads(extend)
             except Exception:
                 ext = {}
-        params = ['type_id=%s' % tid, 'pg=%d' % pg, 'limit=%d' % self.limit]
         year = str(ext.get('year') or '').strip()
         by = str(ext.get('by') or '').strip()
-        if year:
-            params.append('year=' + urllib.parse.quote(year, safe='-'))
-        if by:
-            params.append('by=' + urllib.parse.quote(by, safe=''))
-        d = self._api('/api.php/Appapi/vod?' + '&'.join(params))
-        r = {'list': self._list_from(d)}
-        r.update(self._pager(d, pg))
-        return r
+        subs = _PARENT_MAP.get(str(tid))
+        if not subs:
+            d = self._api(self._vod_query(tid, pg, year, by, self.limit))
+            r = {'list': self._list_from(d)}
+            r.update(self._pager(d, pg))
+            return r
+        # 父分类(动漫/电影)：接口对 t=1/t=2 返回 0 条，改为按子分类同页合并后本地排序
+        merged, seen, pc = [], set(), 1
+        for sub in subs:
+            d = self._api(self._vod_query(sub, pg, year, by, self.limit))
+            for it in (d.get('list') or []):
+                vid = str(it.get('vod_id'))
+                if vid in seen:
+                    continue
+                seen.add(vid)
+                merged.append(it)
+            try:
+                pc = max(pc, int(d.get('pagecount') or 1))
+            except Exception:
+                pass
+        merged.sort(key=lambda x: self._sort_key(x, by), reverse=True)
+        return {
+            'list': self._list_from({'list': merged[:self.limit]}),
+            'page': str(pg),
+            'pagecount': str(pc),
+            'limit': str(self.limit),
+            'total': str(pc * self.limit),
+        }
 
     def detailContent(self, ids):
         vid = self._first_id(ids)
