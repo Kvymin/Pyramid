@@ -42,6 +42,15 @@
             "api": "./py/腾爱优芒B.py"
         },
         {
+            "key": "文才",
+            "name": "文才影视",
+            "type": 3,
+            "api": "./py/文才.py",
+            "ext": {
+                "site": "https://www.tjrongze.com,https://y2s52n7.com,https://m.hkybqufgh.com,https://m.sizhengxt.com,https://m.9zhoukj.com,https://m.jiabaide.cn"
+            }
+        },
+        {
             "key": "星梦Asmr",
             "name": "星梦Asmr",
             "type": 3,
